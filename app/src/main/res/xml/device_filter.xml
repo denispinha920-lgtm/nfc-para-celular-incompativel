@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    Identifica o adaptador USB-TTL CH340 pelo Vendor ID / Product ID,
+    para que o Android ofereça abrir este app automaticamente quando
+    o cabo OTG for conectado.
+
+    1A86 / 7523 (hex) = 6790 / 29987 (decimal) é o par mais comum do CH340.
+    Se o seu adaptador usar um chip ligeiramente diferente (ex: CH341, alguns
+    clones), o app ainda funciona normalmente ao abrir manualmente e tocar
+    em "Conectar" — este filtro só afeta o atalho automático.
+-->
+<resources>
+    <usb-device vendor-id="6790" product-id="29987" />
+</resources>
