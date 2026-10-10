@@ -20,15 +20,6 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
-/**
- * Tela única: conectar no módulo PN532 via USB-OTG, ler UID de uma tag
- * e gravar uma URL nela em formato NDEF.
- *
- * Este é um ponto de partida funcional, não um app finalizado: trate erros de
- * conexão/serial com calma na hora de testar com hardware real, cada
- * variação de módulo PN532 (fabricante, firmware) pode se comportar
- * ligeiramente diferente.
- */
 class MainActivity : AppCompatActivity() {
 
     private val ACTION_USB_PERMISSION = "com.d3d.nfcwriter.USB_PERMISSION"
@@ -128,6 +119,7 @@ class MainActivity : AppCompatActivity() {
 
             CoroutineScope(Dispatchers.IO).launch {
                 try {
+                    pn532?.wakeUp()
                     val fw = pn532?.getFirmwareVersion()
                     pn532?.samConfiguration()
                     setStatus("Módulo OK ($fw). Aproxime uma tag e toque em Ler ou Gravar.")
