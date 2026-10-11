@@ -16,9 +16,11 @@ import androidx.appcompat.app.AppCompatActivity
 import com.hoho.android.usbserial.driver.UsbSerialPort
 import com.hoho.android.usbserial.driver.UsbSerialProber
 import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.asCoroutineDispatcher
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
+import java.util.concurrent.Executors
 
 class MainActivity : AppCompatActivity() {
 
@@ -32,6 +34,9 @@ class MainActivity : AppCompatActivity() {
 
     private var pn532: Pn532Usb? = null
     private lateinit var usbManager: UsbManager
+
+    private val pn532Dispatcher = Executors.newSingleThreadExecutor().asCoroutineDispatcher()
+    private val scope = CoroutineScope(SupervisorJob() + pn532Dispatcher)
 
     private val usbReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context, intent: Intent) {
@@ -59,6 +64,8 @@ class MainActivity : AppCompatActivity() {
         btnRead = findViewById(R.id.btnRead)
         btnWrite = findViewById(R.id.btnWrite)
 
+        setButtonsEnabledDuringOperation(connected = false)
+
         usbManager = getSystemService(Context.USB_SERVICE) as UsbManager
 
         val filter = IntentFilter(ACTION_USB_PERMISSION)
@@ -77,6 +84,13 @@ class MainActivity : AppCompatActivity() {
 
     private fun setStatus(msg: String) {
         runOnUiThread { statusText.text = msg }
+    }
+
+    private fun setButtonsEnabledDuringOperation(connected: Boolean) {
+        runOnUiThread {
+            btnRead.isEnabled = connected
+            btnWrite.isEnabled = connected
+        }
     }
 
     private fun connectToDevice() {
@@ -111,38 +125,63 @@ class MainActivity : AppCompatActivity() {
             return
         }
         val port: UsbSerialPort = driver.ports[0]
-        try {
-            port.open(connection)
-            port.setParameters(115200, 8, UsbSerialPort.STOPBITS_1, UsbSerialPort.PARITY_NONE)
-            pn532 = Pn532Usb(port)
-            setStatus("Conectado. Verificando módulo...")
 
-            CoroutineScope(Dispatchers.IO).launch {
-                try {
-                    pn532?.wakeUp()
-                    val fw = pn532?.getFirmwareVersion()
-                    pn532?.samConfiguration()
-                    setStatus("Módulo OK ($fw). Aproxime uma tag e toque em Ler ou Gravar.")
-                } catch (e: Exception) {
-                    setStatus("Erro ao falar com o PN532: ${e.message}")
+        setButtonsEnabledDuringOperation(connected = false)
+        btnConnect.isEnabled = false
+
+        scope.launch {
+            try {
+                port.open(connection)
+                port.setParameters(115200, 8, UsbSerialPort.STOPBITS_1, UsbSerialPort.PARITY_NONE)
+                val device532 = Pn532Usb(port)
+                pn532 = device532
+
+                setStatus("Conectado. Verificando módulo...")
+
+                // Tenta até 3 vezes: módulos baratos às vezes "engasgam" no
+                // primeiro pacote logo após ligar.
+                var fw: String? = null
+                var lastError: Exception? = null
+                for (attempt in 1..3) {
+                    try {
+                        setStatus("Conectado. Verificando módulo (tentativa $attempt/3)...")
+                        device532.wakeUp()
+                        fw = device532.getFirmwareVersion()
+                        break
+                    } catch (e: Exception) {
+                        lastError = e
+                        delay(400)
+                    }
                 }
+
+                if (fw == null) {
+                    throw lastError ?: Exception("Falha desconhecida ao verificar o módulo")
+                }
+
+                device532.samConfiguration()
+                setStatus("Módulo OK ($fw). Aproxime uma tag e toque em Ler ou Gravar.")
+                setButtonsEnabledDuringOperation(connected = true)
+            } catch (e: Exception) {
+                setStatus("Erro ao falar com o PN532: ${e.message}")
+                setButtonsEnabledDuringOperation(connected = false)
+            } finally {
+                runOnUiThread { btnConnect.isEnabled = true }
             }
-        } catch (e: Exception) {
-            setStatus("Erro ao abrir a porta serial: ${e.message}")
         }
     }
 
     private fun readTag() {
         val p = pn532 ?: run { setStatus("Conecte o módulo primeiro."); return }
+        setButtonsEnabledDuringOperation(connected = false)
         setStatus("Aproxime a tag...")
-        CoroutineScope(Dispatchers.IO).launch {
+        scope.launch {
             try {
                 val uid = p.readUid()
-                withContext(Dispatchers.Main) {
-                    setStatus(if (uid != null) "Tag detectada. UID: $uid" else "Nenhuma tag detectada (timeout).")
-                }
+                setStatus(if (uid != null) "Tag detectada. UID: $uid" else "Nenhuma tag detectada (timeout).")
             } catch (e: Exception) {
                 setStatus("Erro na leitura: ${e.message}")
+            } finally {
+                setButtonsEnabledDuringOperation(connected = true)
             }
         }
     }
@@ -154,8 +193,9 @@ class MainActivity : AppCompatActivity() {
             setStatus("Digite a URL que quer gravar na tag.")
             return
         }
+        setButtonsEnabledDuringOperation(connected = false)
         setStatus("Aproxime a tag para gravar...")
-        CoroutineScope(Dispatchers.IO).launch {
+        scope.launch {
             try {
                 val uid = p.readUid()
                 if (uid == null) {
@@ -166,6 +206,8 @@ class MainActivity : AppCompatActivity() {
                 setStatus("Gravado com sucesso na tag $uid:\n$url")
             } catch (e: Exception) {
                 setStatus("Erro ao gravar: ${e.message}")
+            } finally {
+                setButtonsEnabledDuringOperation(connected = true)
             }
         }
     }
@@ -173,6 +215,7 @@ class MainActivity : AppCompatActivity() {
     override fun onDestroy() {
         super.onDestroy()
         pn532?.close()
+        pn532Dispatcher.close()
         unregisterReceiver(usbReceiver)
     }
 }
